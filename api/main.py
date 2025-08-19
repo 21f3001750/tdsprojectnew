@@ -244,6 +244,20 @@ async def api_endpoint(request: Request):
         code = generate_code_with_llm(questions_text, uploaded_files)
         if not code:
             return JSONResponse(status_code=500, content={"error": "LLM returned empty code"})
+        
+        required_imports = """
+import os
+import sys
+import json
+import base64
+from io import BytesIO
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+"""
+
+# Prepend imports to generated code
+        code = required_imports + "\n" + code
 
         # Write generated code to solution.py
         solution_path = os.path.join(os.getcwd(), "solution.py")
@@ -253,11 +267,11 @@ async def api_endpoint(request: Request):
         # Run generated code
         try:
             result = subprocess.run(
-                [sys.executable, solution_path],
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
+    [sys.executable, solution_path, *uploaded_files.values()],
+    capture_output=True,
+    text=True,
+    timeout=120
+)
             print("DEBUG >> Generated code:\n", code)
         except subprocess.TimeoutExpired as te:
             stdout = te.stdout or ""
