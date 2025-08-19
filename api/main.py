@@ -53,6 +53,25 @@ FILE HANDLING RULES:
     - Pick any `.png` or `.jpg` file if required by the question.
     - Wrap loading in try/except; return None if missing.
 
+FILE HANDLING RULES (for Render deployment):
+
+- Do NOT assume files exist in the working directory.
+- Detect all uploaded files from `sys.argv` arguments passed to the script.
+    - `sys.argv[1]` is the questions file (questions.txt or equivalent)
+    - `sys.argv[2]` is the CSV file (if any)
+    - `sys.argv[3]` can be any image file (optional)
+- CSV files:
+    - Use the CSV filename explicitly mentioned in questions.txt if available.
+    - If not specified, pick the first `.csv` file from `sys.argv` dynamically.
+    - Wrap all CSV loading in try/except; on error, return empty DataFrame.
+    - Convert all column names to strings before using `.str` accessor:
+        df.columns = df.columns.astype(str)
+    - Strip whitespace and special characters from column names:
+        df.columns = df.columns.str.strip().str.replace(' ', '_').str.replace(r'\W', '', regex=True)
+- Images:
+    - Pick any `.png` or `.jpg` file passed via `sys.argv` if required by the question.
+    - Wrap loading in try/except; return None if missing.
+
 DYNAMIC PACKAGE HANDLING:
 - For every Python package used, automatically install it if missing.
 - Wrap imports in try/except:
@@ -145,6 +164,11 @@ JSON OUTPUT RULES:
 - Print a single JSON array in the same order as questions.
 - Use a helper `to_native()` function before printing the final array.
 - ALWAYS wrap the final result in a list `[...]` so that the LLM prints a valid JSON array, even if it contains a single dictionary. Ensure all values are converted to native types using `to_native()`.
+- The final output must be printed using:
+    ```python
+    print(json.dumps([to_native(result_dict)]))
+    ```
+- No other print statements or side effects are allowed in the script.
 """
 
 app = FastAPI()
@@ -244,7 +268,7 @@ async def api_endpoint(request: Request):
         code = generate_code_with_llm(questions_text, uploaded_files)
         if not code:
             return JSONResponse(status_code=500, content={"error": "LLM returned empty code"})
-        
+
         required_imports = """
 import os
 import sys
@@ -256,7 +280,7 @@ import pandas as pd
 import numpy as np
 """
 
-# Prepend imports to generated code
+        # Prepend imports to generated code
         code = required_imports + "\n" + code
 
         # Write generated code to solution.py
@@ -264,14 +288,33 @@ import numpy as np
         with open(solution_path, "w", encoding="utf-8") as f:
             f.write(code)
 
+        # Prepare files for subprocess in correct order
+        argv_files = []
+
+        # 1. questions file
+        for key in ("questions.txt", "questions_file", "questions"):
+            if key in uploaded_files:
+                argv_files.append(uploaded_files[key])
+                break
+
+        # 2. CSV file (first one if any)
+        csv_files = [v for k,v in uploaded_files.items() if k.lower().endswith(".csv")]
+        if csv_files:
+            argv_files.append(csv_files[0])
+
+        # 3. Image file (first one if any)
+        image_files = [v for k,v in uploaded_files.items() if k.lower().endswith((".png",".jpg",".jpeg"))]
+        if image_files:
+            argv_files.append(image_files[0])
+
         # Run generated code
         try:
             result = subprocess.run(
-    [sys.executable, solution_path, *uploaded_files.values()],
-    capture_output=True,
-    text=True,
-    timeout=120
-)
+                [sys.executable, solution_path, *argv_files],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
             print("DEBUG >> Generated code:\n", code)
         except subprocess.TimeoutExpired as te:
             stdout = te.stdout or ""
