@@ -280,12 +280,21 @@ import glob
         with open(solution_path, "w", encoding="utf-8") as f:
             f.write(code)
 
+        csv_file = None
+        for filename, path in uploaded_files.items():
+            if filename.lower().endswith(".csv"):
+                csv_file = path
+                break
+
         # Prepare argv files
         argv_files = []
         for key in ("questions.txt", "questions_file", "questions"):
             if key in uploaded_files:
                 argv_files.append(uploaded_files[key])
                 break
+
+        if csv_file:
+            argv_files.append(csv_file)
 
         # Run generated code
         try:
