@@ -269,6 +269,8 @@ async def api_endpoint(request: Request):
 
         # Generate code using LLM
         code = generate_code_with_llm(questions_text, uploaded_files)
+        code = code.replace("import beautifulsoup4", 
+                    "try:\n    from bs4 import BeautifulSoup\nexcept ImportError:\n    import subprocess, sys\n    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'beautifulsoup4'])\n    from bs4 import BeautifulSoup")
         if not code:
             return JSONResponse(status_code=500, content={"error": "LLM returned empty code"})
 
