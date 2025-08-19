@@ -8,7 +8,6 @@ import traceback
 from fastapi import FastAPI, Request, UploadFile
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-from openai import OpenAI
 import requests
 import inspect
 
@@ -21,9 +20,9 @@ print("Loaded BASE URL:", os.getenv("OPENAI_BASE_URL"))
 BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1")
 API_KEY = os.getenv("OPENAI_API_KEY")
 
-
-# --- Stronger system prompt with CoT, safe-column rules, and fallback strategies ---
+# Strong system prompt
 SYSTEM_PROMPT = """
+
 You are a Data Analyst Agent. Your task is to generate a single, complete Python script that fully answers every question in `questions.txt` within 120 seconds runtime.
 
 CRITICAL RULE: You must never output placeholders such as "Unknown", "Error occurred during processing", "N/A", null, or empty strings.  
@@ -174,25 +173,18 @@ JSON OUTPUT RULES:
 app = FastAPI()
 
 def generate_code_with_llm(questions_text: str, uploaded_files: dict) -> str:
-    """Ask the LLM to produce a plan and Python script."""
     file_list = "\n".join(f"{name}: {path}" for name, path in uploaded_files.items())
-    
     user_prompt = (
-    f"You have the following files in the working directory:\n{file_list}\n\n"
-    "questions.txt content:\n"
-    f"{questions_text}\n\n"
-    "Instructions for the Python script:\n"
-    "1. Automatically detect all imported packages and install them if missing using try/except + pip.\n"
-    "2. Detect all uploaded files dynamically; pick the CSV mentioned in questions.txt or other files (images, etc.) as needed.\n"
-    "3. Always convert all DataFrame columns to strings before using .str accessor:\n"
-    "   df.columns = df.columns.astype(str).str.strip().str.replace(' ', '_').str.replace(r'\\W', '', regex=True)\n"
-    "4. For any URLs mentioned in questions.txt, scrape the required data dynamically.\n"
-    "5. Wrap file I/O, scraping, parsing, and data processing in try/except to avoid runtime crashes.\n"
-    "6. Return answers exactly as specified in questions.txt: a JSON array or object with keys matching those in the file.\n"
-    "7. Include a short numbered plan (CoT) as comments at the top of the script.\n"
-    "8. The script must be runnable standalone and safe for any user-provided questions.txt.\n\n"
-    "Finally, return the script only in a ```python ... ``` code block."
-)
+        f"You have the following files in the working directory:\n{file_list}\n\n"
+        "questions.txt content:\n"
+        f"{questions_text}\n\n"
+        "Instructions:\n"
+        "1. Parse the CSV filename directly from backticks in questions.txt, or fallback to first .csv file in folder.\n"
+        "2. Use sys.argv to read questions, CSV, and images.\n"
+        "3. Wrap all I/O, scraping, and processing in try/except.\n"
+        "4. Include a numbered plan (CoT) as top comments.\n"
+        "5. Return only a Python script in ```python ... ``` code block.\n"
+    )
 
     payload = {
         "model": "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -207,11 +199,6 @@ def generate_code_with_llm(questions_text: str, uploaded_files: dict) -> str:
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
-    
-
-    print("DEBUG >> Using API key prefix:", API_KEY[:10] if API_KEY else None)
-    print("DEBUG >> Headers:", headers)
-    print("DEBUG >> Payload:", json.dumps(payload, indent=2))
 
     url = f"{BASE_URL}/chat/completions"
     response = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -248,7 +235,7 @@ async def api_endpoint(request: Request):
         if not questions_file:
             return JSONResponse(
                 status_code=400,
-                content={"error": "questions.txt file is required (accepted keys: questions.txt, questions_file, questions)"}
+                content={"error": "questions.txt file is required"}
             )
 
         questions_text = (await questions_file.read()).decode("utf-8")
@@ -258,7 +245,10 @@ async def api_endpoint(request: Request):
         for field_name in form.keys():
             upload: UploadFile = form.get(field_name)
             if isinstance(upload, UploadFile):
-                filename = os.path.basename(upload.filename)
+                if upload.filename.lower().endswith(".txt"):
+                    filename = "questions.txt"
+                else:
+                    filename = os.path.basename(upload.filename)
                 path = os.path.join(os.getcwd(), filename)
                 with open(path, "wb") as f:
                     f.write(await upload.read())
@@ -278,9 +268,11 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import re
+import glob
 """
 
-        # Prepend imports to generated code
+        # Prepend imports
         code = required_imports + "\n" + code
 
         # Write generated code to solution.py
@@ -288,24 +280,12 @@ import numpy as np
         with open(solution_path, "w", encoding="utf-8") as f:
             f.write(code)
 
-        # Prepare files for subprocess in correct order
+        # Prepare argv files
         argv_files = []
-
-        # 1. questions file
         for key in ("questions.txt", "questions_file", "questions"):
             if key in uploaded_files:
                 argv_files.append(uploaded_files[key])
                 break
-
-        # 2. CSV file (first one if any)
-        csv_files = [v for k,v in uploaded_files.items() if k.lower().endswith(".csv")]
-        if csv_files:
-            argv_files.append(csv_files[0])
-
-        # 3. Image file (first one if any)
-        image_files = [v for k,v in uploaded_files.items() if k.lower().endswith((".png",".jpg",".jpeg"))]
-        if image_files:
-            argv_files.append(image_files[0])
 
         # Run generated code
         try:
@@ -315,7 +295,6 @@ import numpy as np
                 text=True,
                 timeout=120
             )
-            print("DEBUG >> Generated code:\n", code)
         except subprocess.TimeoutExpired as te:
             stdout = te.stdout or ""
             stderr = te.stderr or ""
@@ -348,7 +327,7 @@ import numpy as np
             return JSONResponse(
                 status_code=500,
                 content={
-                    "error": "Generated code did not print valid JSON array to stdout",
+                    "error": "Generated code did not print valid JSON array",
                     "raw_stdout": result.stdout,
                     "raw_stderr": result.stderr
                 }
