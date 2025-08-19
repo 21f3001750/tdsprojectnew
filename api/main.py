@@ -185,6 +185,8 @@ def generate_code_with_llm(questions_text: str, uploaded_files: dict) -> str:
         "2. Wrap all I/O, scraping, and processing in try/except.\n"
         "3. Include a numbered plan (CoT) as top comments.\n"
         "4. Return only a Python script in ```python ... ``` code block.\n"
+        "CRITICAL: Use sys.argv[1] for questions.txt and sys.argv[2] for CSV.\n"
+        "Do not scan the folder with os.listdir().\n"
     )
 
     payload = {
