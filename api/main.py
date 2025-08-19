@@ -172,6 +172,8 @@ JSON OUTPUT RULES:
 
 app = FastAPI()
 
+
+
 def generate_code_with_llm(questions_text: str, uploaded_files: dict) -> str:
     file_list = "\n".join(f"{name}: {path}" for name, path in uploaded_files.items())
     user_prompt = (
@@ -179,11 +181,10 @@ def generate_code_with_llm(questions_text: str, uploaded_files: dict) -> str:
         "questions.txt content:\n"
         f"{questions_text}\n\n"
         "Instructions:\n"
-        "1. Parse the CSV filename directly from backticks in questions.txt, or fallback to first .csv file in folder.\n"
-        "2. Use sys.argv to read questions, CSV, and images.\n"
-        "3. Wrap all I/O, scraping, and processing in try/except.\n"
-        "4. Include a numbered plan (CoT) as top comments.\n"
-        "5. Return only a Python script in ```python ... ``` code block.\n"
+        "1. Parse the CSV filename directly from backticks in questions.txt, or fallback to first .csv file in sys.argv.\n"
+        "2. Wrap all I/O, scraping, and processing in try/except.\n"
+        "3. Include a numbered plan (CoT) as top comments.\n"
+        "4. Return only a Python script in ```python ... ``` code block.\n"
     )
 
     payload = {
@@ -245,10 +246,9 @@ async def api_endpoint(request: Request):
         for field_name in form.keys():
             upload: UploadFile = form.get(field_name)
             if isinstance(upload, UploadFile):
-                if upload.filename.lower().endswith(".txt"):
+                filename = os.path.basename(upload.filename)
+                if filename.lower().endswith(".txt"):
                     filename = "questions.txt"
-                else:
-                    filename = os.path.basename(upload.filename)
                 path = os.path.join(os.getcwd(), filename)
                 with open(path, "wb") as f:
                     f.write(await upload.read())
@@ -272,7 +272,6 @@ import re
 import glob
 """
 
-        # Prepend imports
         code = required_imports + "\n" + code
 
         # Write generated code to solution.py
@@ -280,23 +279,22 @@ import glob
         with open(solution_path, "w", encoding="utf-8") as f:
             f.write(code)
 
-        csv_file = None
-        for filename, path in uploaded_files.items():
-            if filename.lower().endswith(".csv"):
-                csv_file = path
-                break
-
-        # Prepare argv files
+        # Prepare argv files (questions.txt always first, then first CSV uploaded dynamically)
         argv_files = []
         for key in ("questions.txt", "questions_file", "questions"):
             if key in uploaded_files:
                 argv_files.append(uploaded_files[key])
                 break
 
-        if csv_file:
-            argv_files.append(csv_file)
+        # Add first CSV file from uploaded files
+        csv_file = None
+        for filename, path in uploaded_files.items():
+            if filename.lower().endswith(".csv"):
+                csv_file = path
+                argv_files.append(csv_file)
+                break
 
-        # Run generated code
+        # Run the generated code
         try:
             result = subprocess.run(
                 [sys.executable, solution_path, *argv_files],
